@@ -1,43 +1,31 @@
-export const config = {
-  runtime: 'edge',
-};
-
-export default async function handler(request) {
-  const url = new URL(request.url);
-  let path = url.pathname;
-  let search = url.search;
-
-  // 去掉开头的 /api
-  if (path.startsWith('/api')) {
-    path = path.slice(4);
-  }
-
-  // 代理谷歌瓦片
-  if (path.startsWith('/vt') || path.startsWith('/maps/') || path === '/') {
-    const targetUrl = 'https://mt1.google.com' + (path === '/' ? '/vt' : path) + search;
+export default async function handler(req, res) {
+  try {
+    // 构造目标 Google 地图的 URL（可根据需要替换为 maps.google.com 或 mt0.google.com 等瓦片域名）
+    const targetUrl = new URL(req.url, 'https://www.google.com');
     
-    try {
-      const response = await fetch(targetUrl, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-          'Referer': 'https://maps.google.com/'
-        }
-      });
-      
-      return new Response(response.body, {
-        status: response.status,
-        headers: {
-          'Content-Type': response.headers.get('Content-Type') || 'image/jpeg',
-          'Access-Control-Allow-Origin': '*',
-          'Cache-Control': 'public, max-age=86400'
-        }
-      });
-    } catch (err) {
-      return new Response('Proxy Error', { status: 500 });
-    }
-  }
+    // 转发客户端的请求头，并伪装 Host
+    const headers = new Headers(req.headers);
+    headers.set('Host', 'www.google.com');
 
-  return new Response('OK - Google Map Proxy for Ovi', {
-    headers: { 'Content-Type': 'text/plain' }
-  });
+    // 向 Google 发起请求
+    const response = await fetch(targetUrl.toString(), {
+      method: req.method,
+      headers: headers,
+      body: ['GET', 'HEAD'].includes(req.method) ? undefined : req.body,
+      redirect: 'follow'
+    });
+
+    // 将 Google 的响应头回传给客户端
+    response.headers.forEach((value, key) => {
+      res.setHeader(key, value);
+    });
+
+    res.status(response.status);
+    
+    // 获取响应内容并返回
+    const buffer = await response.arrayBuffer();
+    return res.send(Buffer.from(buffer));
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
 }
